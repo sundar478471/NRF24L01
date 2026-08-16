@@ -1,0 +1,29 @@
+.vercel
+.env
+.env.*
+!.env.example
+
+node_modules/
+dist/
+build/
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.log
+
+firebase-service-account*.json
+service-account*.json
+
+*.pem
+*.key
+*.p12
+*.pfx
+
+.DS_Store
+
+# ESP32 sensitive configuration
+esp32/receiver/receiver_config.h
+
+# Database files
+*.db

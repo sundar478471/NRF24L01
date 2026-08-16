@@ -1,0 +1,20 @@
+{
+  "css.lint.unknownAtRules": "ignore",
+  "clangd.arguments": [
+    "--enable-config"
+  ],
+  "files.associations": {
+    "*.ino": "cpp"
+  },
+  "clangd.fallbackFlags": [
+    "-xc++",
+    "-std=c++17",
+    "-ferror-limit=0",
+    "-w"
+  ],
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe",
+  "python.pythonPath": "${workspaceFolder}/.venv/Scripts/python.exe",
+  "python.analysis.extraPaths": [
+    "${workspaceFolder}/backend"
+  ]
+}

@@ -1,0 +1,6 @@
+CompileFlags:
+  Add: [-xc++, -ferror-limit=0, -w]
+Diagnostics:
+  Suppress: '*'
+Index:
+  Background: Skip

@@ -253,6 +253,16 @@ async def device_offline_checker_loop():
                         dev_status.wifi_status = "DISCONNECTED"
                         dev_status.nrf_status = "ERROR"
                         dev_status.updated_at = now
+                        
+                        # Degrading health metrics to reflect OFFLINE state
+                        health_entry = db.query(DeviceHealth).filter(DeviceHealth.device_id == dev_status.device_id).first()
+                        if health_entry:
+                            health_entry.nrf_score = 0
+                            health_entry.wifi_score = 0
+                            health_entry.overall_score = 0
+                            health_entry.status_label = "CRITICAL"
+                            health_entry.updated_at = now
+                        
                         db.commit()
                         
                         # Broadcast status update

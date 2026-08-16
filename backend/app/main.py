@@ -901,7 +901,7 @@ async def ingest_sensor_data(
     """
     return await process_and_save_sensor_data(reading, db, background_tasks)
 
-@app.get("/api/v1/sensor-data/latest", response_model=SensorReadingResponse)
+@app.get("/api/v1/sensor-data/latest", response_model=Optional[SensorReadingResponse])
 def get_latest_sensor_data(
     device_id: Optional[str] = None,
     db: Session = Depends(get_db)
@@ -912,8 +912,6 @@ def get_latest_sensor_data(
         query = query.filter(SensorReading.device_id == device_id)
     
     latest = query.order_by(desc(SensorReading.received_at)).first()
-    if not latest:
-        raise HTTPException(status_code=404, detail="No sensor readings found")
     return latest
 
 @app.get("/api/v1/sensor-data/history", response_model=List[SensorReadingResponse])

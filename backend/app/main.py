@@ -1066,11 +1066,24 @@ def get_device_status(device_id: str, db: Session = Depends(get_db)):
         if last_seen.tzinfo is None:
             last_seen = last_seen.replace(tzinfo=timezone.utc)
         if last_seen < cutoff:
+            is_updated = False
             if dev_status.status != "OFFLINE":
                 dev_status.status = "OFFLINE"
                 dev_status.wifi_status = "DISCONNECTED"
                 dev_status.nrf_status = "ERROR"
                 dev_status.updated_at = now
+                is_updated = True
+                
+            health_entry = db.query(DeviceHealth).filter(DeviceHealth.device_id == device_id).first()
+            if health_entry and health_entry.overall_score != 0:
+                health_entry.nrf_score = 0
+                health_entry.wifi_score = 0
+                health_entry.overall_score = 0
+                health_entry.status_label = "CRITICAL"
+                health_entry.updated_at = now
+                is_updated = True
+                
+            if is_updated:
                 db.commit()
                 db.refresh(dev_status)
                 
@@ -1196,6 +1209,35 @@ async def device_heartbeat(
 @app.get("/api/v1/devices/{device_id}/health", response_model=DeviceHealthResponse)
 def get_device_health(device_id: str, db: Session = Depends(get_db)):
     """Retrieve the dynamic health score of a device."""
+    dev_status = db.query(DeviceStatus).filter(DeviceStatus.device_id == device_id).first()
+    if dev_status:
+        now = datetime.now(timezone.utc)
+        cutoff = now - timedelta(seconds=settings.OFFLINE_THRESHOLD_SECONDS)
+        last_seen = dev_status.last_seen
+        if last_seen is not None:
+            if last_seen.tzinfo is None:
+                last_seen = last_seen.replace(tzinfo=timezone.utc)
+            if last_seen < cutoff:
+                is_updated = False
+                if dev_status.status != "OFFLINE":
+                    dev_status.status = "OFFLINE"
+                    dev_status.wifi_status = "DISCONNECTED"
+                    dev_status.nrf_status = "ERROR"
+                    dev_status.updated_at = now
+                    is_updated = True
+                
+                health_entry = db.query(DeviceHealth).filter(DeviceHealth.device_id == device_id).first()
+                if health_entry and health_entry.overall_score != 0:
+                    health_entry.nrf_score = 0
+                    health_entry.wifi_score = 0
+                    health_entry.overall_score = 0
+                    health_entry.status_label = "CRITICAL"
+                    health_entry.updated_at = now
+                    is_updated = True
+                    
+                if is_updated:
+                    db.commit()
+
     health = db.query(DeviceHealth).filter(DeviceHealth.device_id == device_id).first()
     if not health:
         raise HTTPException(status_code=404, detail=f"Health metrics for device '{device_id}' not found")

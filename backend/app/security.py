@@ -49,19 +49,21 @@ async def verify_device_credentials(
             detail="Missing device API key header (X-Device-API-Key)"
         )
     
-    device = db.query(Device).filter(Device.id == device_id).first()
+    # Hash incoming key and verify by database lookup
+    incoming_hash = hash_api_key(x_device_api_key)
+    device = db.query(Device).filter(Device.api_key_hash == incoming_hash).first()
     if not device:
         raise HTTPException(
-            status_code=404,
-            detail=f"Device '{device_id}' not found"
+            status_code=403,
+            detail="Invalid device credentials"
         )
     
-    # Hash incoming key and verify
-    incoming_hash = hash_api_key(x_device_api_key)
-    if not secrets.compare_digest(device.api_key_hash, incoming_hash):
+    # Prevent device ID impersonation (verify that payload device_id matches the authenticated device's ID)
+    if device.id != device_id:
         raise HTTPException(
             status_code=403,
             detail="Invalid device credentials"
         )
         
     return device
+

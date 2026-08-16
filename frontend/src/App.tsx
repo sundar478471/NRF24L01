@@ -52,8 +52,12 @@ const getApiUrls = () => {
       ws: `${wsProto}://${hostWithPort}/ws/sensor-data`
     };
   }
-  const isVercel = window.location.hostname.endsWith("vercel.app");
-  if (isVercel) {
+  const isLocal = window.location.hostname === "localhost" || 
+                  window.location.hostname === "127.0.0.1" || 
+                  window.location.hostname.startsWith("192.168.") || 
+                  window.location.hostname.startsWith("10.39.60.");
+                  
+  if (!isLocal) {
     const isSecure = window.location.protocol === "https:";
     const wsProto = isSecure ? "wss" : "ws";
     return {
@@ -66,6 +70,7 @@ const getApiUrls = () => {
     ws: `ws://${window.location.hostname}:8000/ws/sensor-data`
   };
 };
+
 
 const urls = getApiUrls();
 const API_BASE_URL = urls.api;
@@ -1341,14 +1346,7 @@ export default function App() {
               <span>Node: receiver-01</span>
             </div>
 
-            {/* Manual Refresh */}
-            <button
-              onClick={refreshAllData}
-              className="p-2 rounded-xl bg-white border border-slate-200 text-slate-500 hover:text-black hover:border-slate-300 transition-colors shadow-sm"
-              title="Refresh API Data"
-            >
-              <RefreshCw className="w-4 h-4" />
-            </button>
+            {/* Manual Refresh removed to support dynamic real-time updates only */}
           </div>
         </div>
       </header>
@@ -1377,13 +1375,13 @@ export default function App() {
             <div className="mt-4">
               <div className="flex items-baseline gap-1">
                 <span className="text-4xl font-black tracking-tight text-black">
-                  {isLive && sensorData ? `${sensorData.temperature.toFixed(1)}` : "--"}
+                  {sensorData ? `${sensorData.temperature.toFixed(1)}` : "--"}
                 </span>
                 <span className="text-xl font-bold text-slate-500">°C</span>
               </div>
               <p className="text-xs text-slate-500 mt-2 flex items-center gap-1">
                 <Clock className="w-3 h-3" />
-                Updated: {isLive && sensorData ? formatKolkataTime(sensorData.receivedAt) : "NO DATA"}
+                Updated: {sensorData ? formatKolkataTime(sensorData.receivedAt) : "NO DATA"}
               </p>
             </div>
           </div>
@@ -1399,38 +1397,38 @@ export default function App() {
             <div className="mt-4">
               <div className="flex items-baseline gap-1">
                 <span className="text-4xl font-black tracking-tight text-black">
-                  {isLive && sensorData ? `${sensorData.humidity.toFixed(1)}` : "--"}
+                  {sensorData ? `${sensorData.humidity.toFixed(1)}` : "--"}
                 </span>
                 <span className="text-xl font-bold text-slate-500">%</span>
               </div>
               <p className="text-xs text-slate-500 mt-2 flex items-center gap-1">
                 <Clock className="w-3 h-3" />
-                Updated: {isLive && sensorData ? formatKolkataTime(sensorData.receivedAt) : "NO DATA"}
+                Updated: {sensorData ? formatKolkataTime(sensorData.receivedAt) : "NO DATA"}
               </p>
             </div>
           </div>
 
           {/* Motion Card */}
           <div className={`transition-all duration-200 flex flex-col justify-between ${
-            isLive && sensorData?.motion 
+            sensorData?.motion 
               ? "bg-red-50 border border-red-200 shadow-sm rounded-lg p-6"
               : "glass-card"
           }`}>
             <div className="flex items-center justify-between">
               <span className="text-sm font-semibold text-slate-500">PIR Motion Link</span>
-              <div className={`p-2 rounded-xl ${isLive && sensorData?.motion ? "bg-red-100" : "bg-slate-100"}`}>
-                <Activity className={`w-5 h-5 ${isLive && sensorData?.motion ? "text-red-700 animate-pulse" : "text-slate-400"}`} />
+              <div className={`p-2 rounded-xl ${sensorData?.motion ? "bg-red-100" : "bg-slate-100"}`}>
+                <Activity className={`w-5 h-5 ${sensorData?.motion ? "text-red-700 animate-pulse" : "text-slate-400"}`} />
               </div>
             </div>
             <div className="mt-4">
               <span className={`text-2xl font-extrabold tracking-tight uppercase ${
-                isLive && sensorData ? (sensorData.motion ? "text-red-700" : "text-slate-800") : "text-slate-400"
+                sensorData ? (sensorData.motion ? "text-red-700" : "text-slate-800") : "text-slate-400"
               }`}>
-                {isLive && sensorData ? (sensorData.motion ? "MOTION DETECTED" : "NO MOTION") : "NO DATA"}
+                {sensorData ? (sensorData.motion ? "MOTION DETECTED" : "NO MOTION") : "NO DATA"}
               </span>
               <p className="text-xs text-slate-500 mt-3.5 flex items-center gap-1">
                 <Clock className="w-3 h-3" />
-                Last Event: {isLive && sensorData && motionEvents.length > 0 ? formatKolkataTime(motionEvents[0].detected_at) : "NO DATA"}
+                Last Event: {motionEvents.length > 0 ? formatKolkataTime(motionEvents[0].detected_at) : "NO DATA"}
               </p>
             </div>
           </div>
@@ -1471,19 +1469,19 @@ export default function App() {
                 <div className="flex justify-between py-1 border-b border-slate-100">
                   <span className="text-slate-500">Temperature:</span>
                   <span className="font-bold text-black">
-                    {isLive && deviceStatus?.last_temperature !== null ? `${deviceStatus?.last_temperature?.toFixed(1)} °C` : "--"}
+                    {deviceStatus?.last_temperature !== null && deviceStatus?.last_temperature !== undefined ? `${deviceStatus.last_temperature.toFixed(1)} °C` : "--"}
                   </span>
                 </div>
                 <div className="flex justify-between py-1 border-b border-slate-100">
                   <span className="text-slate-500">Humidity:</span>
                   <span className="font-bold text-black">
-                    {isLive && deviceStatus?.last_humidity !== null ? `${deviceStatus?.last_humidity?.toFixed(1)} %` : "--"}
+                    {deviceStatus?.last_humidity !== null && deviceStatus?.last_humidity !== undefined ? `${deviceStatus.last_humidity.toFixed(1)} %` : "--"}
                   </span>
                 </div>
                 <div className="flex justify-between py-1 border-b border-slate-100">
                   <span className="text-slate-500">Motion:</span>
-                  <span className={`font-bold uppercase ${isLive && deviceStatus?.last_motion ? "text-red-600 animate-pulse" : "text-slate-700"}`}>
-                    {isLive && deviceStatus ? (deviceStatus.last_motion ? "DETECTED" : "QUIET") : "NO DATA"}
+                  <span className={`font-bold uppercase ${deviceStatus?.last_motion ? "text-red-600 animate-pulse" : "text-slate-700"}`}>
+                    {deviceStatus ? (deviceStatus.last_motion ? "DETECTED" : "QUIET") : "NO DATA"}
                   </span>
                 </div>
               </div>
@@ -1492,7 +1490,7 @@ export default function App() {
                 <div className="flex justify-between py-1 border-b border-slate-100">
                   <span className="text-slate-500">Last Packet Received:</span>
                   <span className="font-semibold text-black">
-                    {isLive && deviceStatus?.last_packet_number !== null ? `#${deviceStatus.last_packet_number}` : "--"}
+                    {deviceStatus?.last_packet_number !== null && deviceStatus?.last_packet_number !== undefined ? `#${deviceStatus.last_packet_number}` : "--"}
                   </span>
                 </div>
                 <div className="flex justify-between py-1 border-b border-slate-100">

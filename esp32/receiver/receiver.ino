@@ -252,6 +252,85 @@ void performOTA(String otaUrl, String expectedSha256, String toVersion);
 bool postOtaStatus(String statusStr, int progress, String errMsg = "");
 
 // ----------------------------------------
+// Raw HTTPS POST socket helper using WiFiClientSecure
+// ----------------------------------------
+bool sendRawHttpsPost(const char* path, String jsonPayload, String &outResponseBody) {
+  WiFiClientSecure client;
+  client.setCACert(ROOT_CA);
+  client.setHandshakeTimeout(10);
+  
+  const char* host = "nrf24l01-monitoring.vercel.app";
+  const int port = 443;
+  
+  Serial.print("Connecting to ");
+  Serial.print(host);
+  Serial.print(":");
+  Serial.println(port);
+  
+  if (!client.connect(host, port)) {
+    Serial.println("Connection failed!");
+    return false;
+  }
+  
+  Serial.println("TLS CONNECTION SUCCESS");
+  
+  // Format and send HTTP/1.1 Request
+  client.print(String("POST ") + path + " HTTP/1.1\r\n" +
+               "Host: " + host + "\r\n" +
+               "Content-Type: application/json\r\n" +
+               "Accept: application/json\r\n" +
+               "X-Device-API-Key: " + String(DEVICE_API_KEY) + "\r\n" +
+               "Content-Length: " + String(jsonPayload.length()) + "\r\n" +
+               "Connection: close\r\n\r\n" +
+               jsonPayload);
+  
+  Serial.println("POST SENT");
+  
+  // Read response headers and body
+  String responseHeader = "";
+  outResponseBody = "";
+  bool readingHeader = true;
+  unsigned long timeout = millis();
+  
+  while (client.connected() || client.available()) {
+    if (millis() - timeout > 10000) {
+      Serial.println("Response timeout!");
+      break;
+    }
+    
+    if (client.available()) {
+      String line = client.readStringUntil('\n');
+      if (readingHeader) {
+        responseHeader += line + "\n";
+        if (line == "\r" || line == "") {
+          readingHeader = false;
+        }
+      } else {
+        outResponseBody += line + "\n";
+      }
+      timeout = millis(); // Reset timeout on incoming data
+    } else {
+      delay(10);
+    }
+  }
+  
+  client.stop();
+  
+  Serial.println("RESPONSE HEADERS:");
+  Serial.println(responseHeader);
+  Serial.println("SERVER RESPONSE:");
+  Serial.println(outResponseBody);
+  
+  if (responseHeader.indexOf("HTTP/1.1 200") >= 0 || responseHeader.indexOf("HTTP/1.1 201") >= 0) {
+    Serial.println("UPLOAD SUCCESS");
+    return true;
+  } else {
+    Serial.println("UPLOAD FAILED");
+    return false;
+  }
+}
+
+// ----------------------------------------
 // API Ingestion Dispatcher
 // ----------------------------------------
 bool postSensorData(float temp, float hum, bool motion, uint32_t packetNum,
@@ -260,10 +339,6 @@ bool postSensorData(float temp, float hum, bool motion, uint32_t packetNum,
     Serial.println("API Error: Wi-Fi disconnected. Cannot upload.");
     return false;
   }
-
-  HTTPClient http;
-  bool success = false;
-  int httpResponseCode = 0;
 
   // Build JSON payload
   int bufferCount = getBufferCount();
@@ -310,43 +385,8 @@ bool postSensorData(float temp, float hum, bool motion, uint32_t packetNum,
   Serial.println(BACKEND_URL);
   Serial.println();
 
-  WiFiClientSecure secureClient;
-  WiFiClient plainClient;
-  bool isHttps = String(BACKEND_URL).startsWith("https://");
-
-  if (isHttps) {
-    secureClient.setCACert(ROOT_CA);
-    secureClient.setHandshakeTimeout(10);
-    if (http.begin(secureClient, BACKEND_URL)) {
-      Serial.println("TLS CONNECTED");
-    }
-  } else {
-    http.begin(plainClient, BACKEND_URL);
-  }
-
-  http.addHeader("Content-Type", "application/json");
-  http.addHeader("X-Device-API-Key", DEVICE_API_KEY);
-
-  Serial.println("POSTING DATA");
-  httpResponseCode = http.POST(jsonPayload);
-
-  Serial.print("HTTP STATUS: ");
-  Serial.println(httpResponseCode);
-
-  String responseBody = http.getString();
-  Serial.println("SERVER RESPONSE:");
-  Serial.println(responseBody);
-
-  if (httpResponseCode >= 200 && httpResponseCode < 300) {
-    success = true;
-    Serial.println("UPLOAD SUCCESS");
-  } else {
-    Serial.println("UPLOAD FAILED");
-    backendFailureCount++;
-  }
-
-  http.end();
-  return success;
+  String responseBody = "";
+  return sendRawHttpsPost("/api/v1/sensor-data", jsonPayload, responseBody);
 }
 
 bool postHeartbeat(String wifiStatus, String nrfStatus) {
@@ -354,28 +394,6 @@ bool postHeartbeat(String wifiStatus, String nrfStatus) {
     Serial.println("Heartbeat Error: Wi-Fi disconnected.");
     return false;
   }
-
-  HTTPClient http;
-  bool success = false;
-  int httpResponseCode = 0;
-
-  String heartbeatUrl = String(BACKEND_URL);
-  heartbeatUrl.replace("/sensor-data", "/devices/heartbeat");
-
-  WiFiClientSecure secureClient;
-  WiFiClient plainClient;
-  bool isHttps = heartbeatUrl.startsWith("https://");
-
-  if (isHttps) {
-    secureClient.setCACert(ROOT_CA);
-    secureClient.setHandshakeTimeout(10);
-    http.begin(secureClient, heartbeatUrl);
-  } else {
-    http.begin(plainClient, heartbeatUrl);
-  }
-
-  http.addHeader("Content-Type", "application/json");
-  http.addHeader("X-Device-API-Key", DEVICE_API_KEY);
 
   String jsonPayload =
       "{\"device_id\":\"" + String(DEVICE_ID) + "\",\"wifi_status\":\"" +
@@ -386,12 +404,10 @@ bool postHeartbeat(String wifiStatus, String nrfStatus) {
       ",\"buffer_count\":" + String(getBufferCount()) +
       ",\"firmware_version\":\"" + String(FIRMWARE_VERSION) + "\"}";
 
-  httpResponseCode = http.POST(jsonPayload);
+  String responseBody = "";
+  bool success = sendRawHttpsPost("/api/v1/devices/heartbeat", jsonPayload, responseBody);
 
-  if (httpResponseCode == 200) {
-    success = true;
-    String responseBody = http.getString();
-
+  if (success) {
     // Check if OTA is pending in response
     if (responseBody.indexOf("\"ota_pending\":true") >= 0) {
       String otaUrl = extractJsonValue(responseBody, "ota_url");
@@ -405,13 +421,9 @@ bool postHeartbeat(String wifiStatus, String nrfStatus) {
       }
     }
   } else {
-    Serial.print("Heartbeat failed (HTTP ");
-    Serial.print(httpResponseCode);
-    Serial.println(")");
     backendFailureCount++;
   }
 
-  http.end();
   return success;
 }
 
@@ -686,25 +698,7 @@ bool postOtaStatus(String statusStr, int progress, String errMsg) {
   if (WiFi.status() != WL_CONNECTED)
     return false;
 
-  HTTPClient http;
-  String otaStatusUrl = String(BACKEND_URL);
-  otaStatusUrl.replace("/sensor-data",
-                       "/devices/" + String(DEVICE_ID) + "/ota/status");
-
-  WiFiClientSecure secureClient;
-  WiFiClient plainClient;
-  bool isHttps = otaStatusUrl.startsWith("https://");
-
-  if (isHttps) {
-    secureClient.setCACert(ROOT_CA);
-    secureClient.setHandshakeTimeout(10);
-    http.begin(secureClient, otaStatusUrl);
-  } else {
-    http.begin(plainClient, otaStatusUrl);
-  }
-
-  http.addHeader("Content-Type", "application/json");
-  http.addHeader("X-Device-API-Key", DEVICE_API_KEY);
+  String path = "/api/v1/devices/" + String(DEVICE_ID) + "/ota/status";
 
   String jsonPayload =
       "{\"status\":\"" + statusStr + "\",\"progress\":" + String(progress);
@@ -713,9 +707,8 @@ bool postOtaStatus(String statusStr, int progress, String errMsg) {
   }
   jsonPayload += "}";
 
-  int httpResponseCode = http.POST(jsonPayload);
-  http.end();
-  return (httpResponseCode == 200);
+  String responseBody = "";
+  return sendRawHttpsPost(path.c_str(), jsonPayload, responseBody);
 }
 
 void performOTA(String otaUrl, String expectedSha256, String toVersion) {

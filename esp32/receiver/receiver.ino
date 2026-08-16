@@ -295,36 +295,53 @@ bool postSensorData(float temp, float hum, bool motion, uint32_t packetNum,
   }
   jsonPayload += "}";
 
-  if (String(BACKEND_URL).startsWith("https://")) {
-    WiFiClientSecure client;
-    client.setCACert(ROOT_CA);
-    http.begin(client, BACKEND_URL);
+  // Diagnostic output before POST
+  Serial.println("\nWIFI STATUS");
+  Serial.println(WiFi.status() == WL_CONNECTED ? "CONNECTED" : "OFFLINE");
+  Serial.println("WIFI RSSI");
+  Serial.print(WiFi.RSSI());
+  Serial.println(" dBm");
+  Serial.println("FREE HEAP");
+  Serial.print(ESP.getFreeHeap());
+  Serial.println(" bytes");
+  Serial.println("HOSTNAME");
+  Serial.println("nrf24l01-monitoring.vercel.app");
+  Serial.println("URL");
+  Serial.println(BACKEND_URL);
+  Serial.println();
+
+  WiFiClientSecure secureClient;
+  WiFiClient plainClient;
+  bool isHttps = String(BACKEND_URL).startsWith("https://");
+
+  if (isHttps) {
+    secureClient.setCACert(ROOT_CA);
+    secureClient.setHandshakeTimeout(10);
+    if (http.begin(secureClient, BACKEND_URL)) {
+      Serial.println("TLS CONNECTED");
+    }
   } else {
-    WiFiClient client;
-    http.begin(client, BACKEND_URL);
+    http.begin(plainClient, BACKEND_URL);
   }
 
   http.addHeader("Content-Type", "application/json");
   http.addHeader("X-Device-API-Key", DEVICE_API_KEY);
 
-  Serial.print("[RECEIVER] Ingesting packet #");
-  Serial.print(packetNum);
-  Serial.print(" (Buffered: ");
-  Serial.print(timestamp > 0 ? "Yes" : "No");
-  Serial.print(")... ");
-
+  Serial.println("POSTING DATA");
   httpResponseCode = http.POST(jsonPayload);
 
-  if (httpResponseCode == 201 || httpResponseCode == 200 ||
-      httpResponseCode == 409) {
+  Serial.print("HTTP STATUS: ");
+  Serial.println(httpResponseCode);
+
+  String responseBody = http.getString();
+  Serial.println("SERVER RESPONSE:");
+  Serial.println(responseBody);
+
+  if (httpResponseCode >= 200 && httpResponseCode < 300) {
     success = true;
-    Serial.print("SUCCESS (HTTP Code ");
-    Serial.print(httpResponseCode);
-    Serial.println(")");
+    Serial.println("UPLOAD SUCCESS");
   } else {
-    Serial.print("FAILED (HTTP Code ");
-    Serial.print(httpResponseCode);
-    Serial.println(")");
+    Serial.println("UPLOAD FAILED");
     backendFailureCount++;
   }
 
@@ -345,13 +362,16 @@ bool postHeartbeat(String wifiStatus, String nrfStatus) {
   String heartbeatUrl = String(BACKEND_URL);
   heartbeatUrl.replace("/sensor-data", "/devices/heartbeat");
 
-  if (heartbeatUrl.startsWith("https://")) {
-    WiFiClientSecure client;
-    client.setCACert(ROOT_CA);
-    http.begin(client, heartbeatUrl);
+  WiFiClientSecure secureClient;
+  WiFiClient plainClient;
+  bool isHttps = heartbeatUrl.startsWith("https://");
+
+  if (isHttps) {
+    secureClient.setCACert(ROOT_CA);
+    secureClient.setHandshakeTimeout(10);
+    http.begin(secureClient, heartbeatUrl);
   } else {
-    WiFiClient client;
-    http.begin(client, heartbeatUrl);
+    http.begin(plainClient, heartbeatUrl);
   }
 
   http.addHeader("Content-Type", "application/json");
@@ -671,13 +691,16 @@ bool postOtaStatus(String statusStr, int progress, String errMsg) {
   otaStatusUrl.replace("/sensor-data",
                        "/devices/" + String(DEVICE_ID) + "/ota/status");
 
-  if (otaStatusUrl.startsWith("https://")) {
-    WiFiClientSecure client;
-    client.setCACert(ROOT_CA);
-    http.begin(client, otaStatusUrl);
+  WiFiClientSecure secureClient;
+  WiFiClient plainClient;
+  bool isHttps = otaStatusUrl.startsWith("https://");
+
+  if (isHttps) {
+    secureClient.setCACert(ROOT_CA);
+    secureClient.setHandshakeTimeout(10);
+    http.begin(secureClient, otaStatusUrl);
   } else {
-    WiFiClient client;
-    http.begin(client, otaStatusUrl);
+    http.begin(plainClient, otaStatusUrl);
   }
 
   http.addHeader("Content-Type", "application/json");

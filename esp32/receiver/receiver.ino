@@ -26,20 +26,20 @@
   Website Dashboard
 */
 
+#include "receiver_config.h"
+#include <HTTPClient.h>
+#include <RF24.h>
+#include <SPI.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
-#include <HTTPClient.h>
-#include <SPI.h>
-#include <RF24.h>
-#include "receiver_config.h"
 
 // =====================================================
 // USER CONFIGURATION
 // =====================================================
 
 // Wi-Fi credentials loaded from receiver_config.h
-const char* WIFI_SSID = SECRET_SSID;
-const char* WIFI_PASSWORD = SECRET_PASS;
+const char *WIFI_SSID = SECRET_SSID;
+const char *WIFI_PASSWORD = SECRET_PASS;
 
 // IMPORTANT:
 // Put your PUBLIC backend API endpoint here.
@@ -52,17 +52,15 @@ const char* WIFI_PASSWORD = SECRET_PASS;
 // 127.0.0.1
 // 192.168.x.x
 
-const char* API_URL =
-  "https://nrf24l01-monitoring.vercel.app/api/v1/sensor-data";
+const char *API_URL = "https://nrf24l01-monitoring.vercel.app/";
 
-const char* HEARTBEAT_URL =
-  "https://nrf24l01-monitoring.vercel.app/api/v1/devices/heartbeat";
+const char *HEARTBEAT_URL = "https://nrf24l01-monitoring.vercel.app/";
 
 // Device identifier used by your website/backend
-const char* DEVICE_ID = "receiver-01";
+const char *DEVICE_ID = "receiver-01";
 
 // Device API key loaded from receiver_config.h
-const char* DEVICE_API_KEY = SECRET_API_KEY;
+const char *DEVICE_API_KEY = SECRET_API_KEY;
 
 // =====================================================
 // NRF24 PINS
@@ -139,7 +137,7 @@ uint32_t lastPacketNumber = 0;
 // Device diagnostics and state tracking
 uint32_t wifiReconnects = 0;
 uint32_t backendFailures = 0;
-const char* FIRMWARE_VERSION = "1.0.0";
+const char *FIRMWARE_VERSION = "1.0.0";
 
 // Device considered offline after this period
 const unsigned long DEVICE_TIMEOUT = 10000;
@@ -203,10 +201,7 @@ void connectWiFi() {
 
   unsigned long start = millis();
 
-  while (
-    WiFi.status() != WL_CONNECTED &&
-    millis() - start < 15000
-  ) {
+  while (WiFi.status() != WL_CONNECTED && millis() - start < 15000) {
 
     delay(500);
 
@@ -225,7 +220,6 @@ void connectWiFi() {
   } else {
 
     Serial.println("Wi-Fi connection FAILED");
-
   }
 }
 
@@ -264,15 +258,9 @@ bool sendSensorData() {
   http.setTimeout(8000);
 
   // Authentication - updated to expect "X-Device-API-Key"
-  http.addHeader(
-    "X-Device-API-Key",
-    DEVICE_API_KEY
-  );
+  http.addHeader("X-Device-API-Key", DEVICE_API_KEY);
 
-  http.addHeader(
-    "Content-Type",
-    "application/json"
-  );
+  http.addHeader("Content-Type", "application/json");
 
   // ---------------------------------------------------
   // JSON DATA
@@ -298,7 +286,7 @@ bool sendSensorData() {
 
   json += "\"packet_number\":";
   json += String(packet.packet_number);
-  
+
   // Add diagnostic fields to match database schemas
   json += ",";
   json += "\"wifi_reconnects\":";
@@ -393,7 +381,8 @@ bool sendHeartbeat() {
 
   // Determine NRF Link status
   String nrfStatus = "ERROR";
-  if (millis() - lastPacketReceived <= DEVICE_TIMEOUT && lastPacketReceived > 0) {
+  if (millis() - lastPacketReceived <= DEVICE_TIMEOUT &&
+      lastPacketReceived > 0) {
     nrfStatus = "ACTIVE";
   }
 
@@ -483,10 +472,7 @@ void checkButton() {
 
   bool currentButtonState = digitalRead(BUTTON_PIN);
 
-  if (
-    previousButtonState == HIGH &&
-    currentButtonState == LOW
-  ) {
+  if (previousButtonState == HIGH && currentButtonState == LOW) {
 
     Serial.println("BUTTON PRESSED");
 
@@ -512,42 +498,30 @@ void receiveNRF24Data() {
 
   while (radio.available()) {
 
-    radio.read(
-      &packet,
-      sizeof(packet)
-    );
+    radio.read(&packet, sizeof(packet));
   }
 
   // ---------------------------------------------------
   // VALIDATE DATA
   // ---------------------------------------------------
 
-  if (isnan(packet.temperature) ||
-      isnan(packet.humidity)) {
+  if (isnan(packet.temperature) || isnan(packet.humidity)) {
 
-    Serial.println(
-      "WARNING: Invalid sensor packet"
-    );
+    Serial.println("WARNING: Invalid sensor packet");
 
     return;
   }
 
-  if (packet.humidity < 0 ||
-      packet.humidity > 100) {
+  if (packet.humidity < 0 || packet.humidity > 100) {
 
-    Serial.println(
-      "WARNING: Invalid humidity"
-    );
+    Serial.println("WARNING: Invalid humidity");
 
     return;
   }
 
-  if (packet.temperature < -50 ||
-      packet.temperature > 100) {
+  if (packet.temperature < -50 || packet.temperature > 100) {
 
-    Serial.println(
-      "WARNING: Invalid temperature"
-    );
+    Serial.println("WARNING: Invalid temperature");
 
     return;
   }
@@ -590,20 +564,14 @@ void receiveNRF24Data() {
   // MOTION STATE CHANGE
   // ---------------------------------------------------
 
-  if (
-    packet.motion &&
-    !lastMotionState
-  ) {
+  if (packet.motion && !lastMotionState) {
 
     Serial.println(">>> MOTION EVENT STARTED <<<");
 
     buzzerAcknowledged = false;
   }
 
-  if (
-    !packet.motion &&
-    lastMotionState
-  ) {
+  if (!packet.motion && lastMotionState) {
 
     Serial.println(">>> MOTION EVENT CLEARED <<<");
   }
@@ -656,9 +624,7 @@ void setup() {
 
   if (!radio.begin()) {
 
-    Serial.println(
-      "CRITICAL ERROR: NRF24 NOT DETECTED"
-    );
+    Serial.println("CRITICAL ERROR: NRF24 NOT DETECTED");
 
     rgbRed();
 
@@ -682,16 +648,11 @@ void setup() {
 
   radio.setRetries(5, 15);
 
-  radio.openReadingPipe(
-    1,
-    RADIO_ADDRESS
-  );
+  radio.openReadingPipe(1, RADIO_ADDRESS);
 
   radio.startListening();
 
-  Serial.println(
-    "[OK] NRF24L01 initialized"
-  );
+  Serial.println("[OK] NRF24L01 initialized");
 
   // ---------------------------------------------------
   // WIFI
@@ -743,18 +704,13 @@ void loop() {
   // WIFI RECONNECT
   // ---------------------------------------------------
 
-  if (
-    millis() - lastWiFiCheck >
-    WIFI_RECONNECT_INTERVAL
-  ) {
+  if (millis() - lastWiFiCheck > WIFI_RECONNECT_INTERVAL) {
 
     lastWiFiCheck = millis();
 
     if (WiFi.status() != WL_CONNECTED) {
 
-      Serial.println(
-        "Wi-Fi disconnected. Reconnecting..."
-      );
+      Serial.println("Wi-Fi disconnected. Reconnecting...");
 
       connectWiFi();
     }
@@ -764,10 +720,7 @@ void loop() {
   // HEARTBEAT
   // ---------------------------------------------------
 
-  if (
-    millis() - lastHeartbeat >
-    HEARTBEAT_INTERVAL
-  ) {
+  if (millis() - lastHeartbeat > HEARTBEAT_INTERVAL) {
 
     lastHeartbeat = millis();
 
@@ -786,9 +739,7 @@ void loop() {
     Serial.println(lastPacketNumber);
 
     Serial.print("Last Data Age: ");
-    Serial.print(
-      (millis() - lastPacketReceived) / 1000
-    );
+    Serial.print((millis() - lastPacketReceived) / 1000);
     Serial.println(" seconds");
 
     Serial.println("=====================================");

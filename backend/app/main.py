@@ -501,6 +501,20 @@ def health_check(db: Session = Depends(get_db)):
         "contract_address": settings.BLOCKCHAIN_CONTRACT_ADDRESS or "not_configured"
     }
 
+@app.get("/api/v1/debug-db")
+def debug_db():
+    url = settings.DATABASE_URL
+    safe_url = url
+    if "@" in url:
+        parts = url.split("@")
+        prefix = parts[0]
+        if ":" in prefix:
+            subparts = prefix.split(":")
+            safe_url = f"{subparts[0]}:{subparts[1]}:***@{parts[1]}"
+        else:
+            safe_url = f"***@{parts[1]}"
+    return {"database_url": safe_url}
+
 async def update_metrics_and_health(
     device_id: str,
     db: Session,

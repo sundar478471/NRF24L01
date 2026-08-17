@@ -1,32 +1,61 @@
-/**
- * Blockchain-Enabled Secure IoT Monitoring System
- * TRANSMITTER NODE FIRMWARE
- * 
- * Hardware: ESP32 WROOM 38-pin
- * Sensors: DHT22 (Temp/Hum), PIR (Motion)
- * Wireless: NRF24L01+ PA/LNA
- */
+/*
+  Blockchain-Enabled IoT Monitoring System
+  TRANSMITTER ESP32
+
+  Hardware:
+  - ESP32 WROOM 38-pin
+  - DHT22
+  - PIR
+  - NRF24L01
+
+  Data flow:
+  DHT22 + PIR
+       ↓
+  ESP32 Transmitter
+       ↓
+  NRF24L01
+*/
 
 #include <SPI.h>
 #include <RF24.h>
 #include <DHT.h>
 
-// Sensor Pin Configurations
-#define DHTPIN 17
-#define DHTTYPE DHT22
-#define PIRPIN 27
+// =====================================================
+// PIN CONFIGURATION
+// =====================================================
 
-// NRF24L01 Pin Configurations
-#define CE_PIN 4
-#define CSN_PIN 5
+#define DHT_PIN 17
+#define DHT_TYPE DHT22
 
-// System Parameters
-const uint64_t PIPE_ADDRESS = 0x4E4F444531LL; // "NODE1" address
-const uint8_t RF_CHANNEL = 108;               // Channel 108
-const rf24_pa_dbm_e PA_LEVEL = RF24_PA_LOW;   // Startup power level
-const rf24_datarate_e DATA_RATE = RF24_250KBPS; // 250kbps speed for longer range
+#define PIR_PIN 27
 
-// Data Packet Structure (Must match Receiver)
+#define NRF_CE 4
+#define NRF_CSN 5
+
+// =====================================================
+// NRF24 CONFIGURATION
+// =====================================================
+
+const uint64_t RADIO_ADDRESS = 0x4E4F444531LL; // NODE1
+
+const uint8_t RADIO_CHANNEL = 108;
+
+const rf24_datarate_e RADIO_DATA_RATE = RF24_250KBPS;
+
+const rf24_pa_dbm_e RADIO_PA_LEVEL = RF24_PA_LOW;
+
+// =====================================================
+// SENSOR TRANSMISSION INTERVAL
+// =====================================================
+
+const unsigned long SENSOR_INTERVAL = 2500;
+
+// =====================================================
+// SENSOR PACKET
+// IMPORTANT:
+// Receiver MUST use the exact same structure.
+// =====================================================
+
 struct SensorPacket {
   float temperature;
   float humidity;
@@ -34,82 +63,185 @@ struct SensorPacket {
   uint32_t packet_number;
 };
 
-// Global Instances
-DHT dht(DHTPIN, DHTTYPE);
-RF24 radio(CE_PIN, CSN_PIN);
-SensorPacket packet = {0.0, 0.0, false, 0};
-unsigned long lastReadTime = 0;
-const unsigned long READ_INTERVAL = 2500; // Read sensors every 2.5s (DHT22 max rate)
+// =====================================================
+// OBJECTS
+// =====================================================
+
+DHT dht(DHT_PIN, DHT_TYPE);
+
+RF24 radio(NRF_CE, NRF_CSN);
+
+SensorPacket packet;
+
+// =====================================================
+// VARIABLES
+// =====================================================
+
+unsigned long lastSensorRead = 0;
+
+uint32_t packetCounter = 0;
+
+// =====================================================
+// SETUP
+// =====================================================
 
 void setup() {
+
   Serial.begin(115200);
-  while (!Serial) {
-    delay(10); // Wait for serial port
-  }
-  Serial.println("\n=== Starting IoT Sensor Transmitter ===");
 
-  // Initialize Sensors
+  delay(1000);
+
+  Serial.println();
+  Serial.println("=================================");
+  Serial.println("   IoT TRANSMITTER ESP32");
+  Serial.println("=================================");
+
+  // -----------------------------
+  // DHT22
+  // -----------------------------
+
   dht.begin();
-  pinMode(PIRPIN, INPUT);
-  Serial.println("DHT22 and PIR initialized.");
 
-  // Initialize NRF24L01
+  Serial.println("[OK] DHT22 initialized");
+
+  // -----------------------------
+  // PIR
+  // -----------------------------
+
+  pinMode(PIR_PIN, INPUT);
+
+  Serial.println("[OK] PIR initialized");
+
+  // -----------------------------
+  // NRF24
+  // -----------------------------
+
   if (!radio.begin()) {
-    Serial.println("CRITICAL: NRF24L01 hardware did not respond!");
-    while (1) {
-      // Loop forever on hardware fault
+
+    Serial.println("[ERROR] NRF24L01 NOT DETECTED");
+
+    while (true) {
       delay(1000);
     }
   }
 
-  radio.setChannel(RF_CHANNEL);
-  radio.setDataRate(DATA_RATE);
-  radio.setPALevel(PA_LEVEL);
-  radio.openWritingPipe(PIPE_ADDRESS);
-  radio.stopListening(); // Set as Transmitter
+  radio.setChannel(RADIO_CHANNEL);
 
-  Serial.println("NRF24L01 radio initialized successfully.");
-  Serial.print("Channel: "); Serial.println(RF_CHANNEL);
-  Serial.print("Data Rate: "); Serial.println("250KBPS");
+  radio.setDataRate(RADIO_DATA_RATE);
+
+  radio.setPALevel(RADIO_PA_LEVEL);
+
+  radio.setRetries(5, 15);
+
+  radio.openWritingPipe(RADIO_ADDRESS);
+
+  radio.stopListening();
+
+  Serial.println("[OK] NRF24L01 initialized");
+
+  Serial.print("Channel: ");
+  Serial.println(RADIO_CHANNEL);
+
+  Serial.println("Data Rate: 250KBPS");
+
+  Serial.println();
+  Serial.println("TRANSMITTER READY");
+  Serial.println("---------------------------------");
+
+  packet.temperature = 0;
+  packet.humidity = 0;
+  packet.motion = false;
+  packet.packet_number = 0;
 }
 
+// =====================================================
+// LOOP
+// =====================================================
+
 void loop() {
-  unsigned long currentMillis = millis();
 
-  // Periodic sensor read and transmit
-  if (currentMillis - lastReadTime >= READ_INTERVAL) {
-    lastReadTime = currentMillis;
+  unsigned long now = millis();
 
-    // Read Sensors
-    float t = dht.readTemperature();
-    float h = dht.readHumidity();
-    bool motion = (digitalRead(PIRPIN) == HIGH);
-
-    // Validate sensor values (prevent NaN crashes)
-    if (isnan(t) || isnan(h)) {
-      Serial.println("WARNING: Failed to read from DHT sensor! Keeping previous values.");
-    } else {
-      packet.temperature = t;
-      packet.humidity = h;
-    }
-    packet.motion = motion;
-    packet.packet_number++;
-
-    // Diagnostics Serial print
-    Serial.print("Reading [Packet #"); Serial.print(packet.packet_number); Serial.println("]");
-    Serial.print("  Temp: "); Serial.print(packet.temperature); Serial.println(" C");
-    Serial.print("  Hum:  "); Serial.print(packet.humidity); Serial.println(" %");
-    Serial.print("  Motion: "); Serial.println(packet.motion ? "DETECTED" : "None");
-
-    // Send packet
-    bool success = radio.write(&packet, sizeof(packet));
-
-    if (success) {
-      Serial.println("  Transmission: SUCCESSFUL");
-    } else {
-      Serial.println("  Transmission: FAILED! (Receiver offline or range issue)");
-      // Optional: Add NRF retry logic here
-    }
-    Serial.println("----------------------------------------");
+  if (now - lastSensorRead < SENSOR_INTERVAL) {
+    return;
   }
+
+  lastSensorRead = now;
+
+  // -----------------------------
+  // READ DHT22
+  // -----------------------------
+
+  float temperature = dht.readTemperature();
+
+  float humidity = dht.readHumidity();
+
+  if (!isnan(temperature)) {
+    packet.temperature = temperature;
+  } else {
+    Serial.println("[WARNING] Temperature read failed");
+  }
+
+  if (!isnan(humidity)) {
+    packet.humidity = humidity;
+  } else {
+    Serial.println("[WARNING] Humidity read failed");
+  }
+
+  // -----------------------------
+  // READ PIR
+  // -----------------------------
+
+  packet.motion = digitalRead(PIR_PIN) == HIGH;
+
+  // -----------------------------
+  // PACKET NUMBER
+  // -----------------------------
+
+  packetCounter++;
+
+  packet.packet_number = packetCounter;
+
+  // -----------------------------
+  // SERIAL OUTPUT
+  // -----------------------------
+
+  Serial.println();
+
+  Serial.print("Packet #");
+  Serial.println(packet.packet_number);
+
+  Serial.print("Temperature: ");
+  Serial.print(packet.temperature, 2);
+  Serial.println(" °C");
+
+  Serial.print("Humidity: ");
+  Serial.print(packet.humidity, 2);
+  Serial.println(" %");
+
+  Serial.print("Motion: ");
+
+  if (packet.motion) {
+    Serial.println("DETECTED");
+  } else {
+    Serial.println("NO MOTION");
+  }
+
+  // -----------------------------
+  // SEND THROUGH NRF24
+  // -----------------------------
+
+  bool sent = radio.write(&packet, sizeof(packet));
+
+  if (sent) {
+
+    Serial.println("NRF24: TRANSMISSION SUCCESS");
+
+  } else {
+
+    Serial.println("NRF24: TRANSMISSION FAILED");
+
+  }
+
+  Serial.println("---------------------------------");
 }

@@ -94,20 +94,28 @@ class BlockchainClient:
             self.w3 = None
             self.contract = None
         else:
-            logger.info(f"Connecting to RPC: {settings.BLOCKCHAIN_RPC_URL}")
-            self.w3 = AsyncWeb3(AsyncHTTPProvider(settings.BLOCKCHAIN_RPC_URL))
-            self.contract_address = self.w3.to_checksum_address(settings.BLOCKCHAIN_CONTRACT_ADDRESS)
-            self.contract = self.w3.eth.contract(address=self.contract_address, abi=REGISTRY_ABI)
-            self.private_key = settings.BLOCKCHAIN_PRIVATE_KEY
-            self.account = self.w3.eth.account.from_key(self.private_key)
-            logger.info(f"Loaded authority wallet address: {self.account.address}")
+            try:
+                logger.info(f"Connecting to RPC: {settings.BLOCKCHAIN_RPC_URL}")
+                self.w3 = AsyncWeb3(AsyncHTTPProvider(settings.BLOCKCHAIN_RPC_URL))
+                self.contract_address = self.w3.to_checksum_address(settings.BLOCKCHAIN_CONTRACT_ADDRESS)
+                self.contract = self.w3.eth.contract(address=self.contract_address, abi=REGISTRY_ABI)
+                self.private_key = settings.BLOCKCHAIN_PRIVATE_KEY
+                self.account = self.w3.eth.account.from_key(self.private_key)
+                logger.info(f"Loaded authority wallet address: {self.account.address}")
+            except Exception as e:
+                logger.error(f"Error initializing real blockchain provider: {e}. Falling back to MOCK mode.")
+                self.is_mock = True
+                self.w3 = None
+                self.contract = None
+                self.private_key = None
+                self.account = None
 
     async def verify_hash_on_chain(self, device_id: str, packet_number: int, computed_hash: str) -> Tuple[str, Optional[str], Optional[int]]:
         """
         Queries the blockchain to verify a hash.
         Returns (verification_status, onchain_hash, block_number).
         """
-        if self.is_mock:
+        if self.is_mock or self.contract is None:
             # Mock verification
             return "VERIFIED", computed_hash, 999999
 
@@ -140,7 +148,7 @@ class BlockchainClient:
         Submits a sensor data hash to the smart contract.
         Returns (transaction_hash, block_number).
         """
-        if self.is_mock:
+        if self.is_mock or self.w3 is None or self.contract is None or self.account is None or self.private_key is None:
             # Simulate network latency and return mock values
             await asyncio.sleep(1.5)
             mock_tx = f"0xmock{hashlib.sha256(f'{device_id}{packet_number}{data_hash_hex}'.encode()).hexdigest()[:60]}"

@@ -6,6 +6,8 @@ from sqlalchemy.orm import Session
 from backend.app.database import get_db
 from backend.app.models import Device
 
+from typing import Optional
+
 # Header name for device authentication
 API_KEY_HEADER = APIKeyHeader(name="X-Device-API-Key", auto_error=False)
 
@@ -21,11 +23,11 @@ from fastapi import Request
 
 async def verify_device_credentials(
     request: Request,
-    x_device_api_key: str = Security(API_KEY_HEADER),
+    x_device_api_key_header: Optional[str] = Security(API_KEY_HEADER),
     db: Session = Depends(get_db)
 ) -> Device:
     """
-    Validates the device ID and the X-Device-API-Key header.
+    Validates the device ID and either the X-Device-API-Key or X-Device-Key header.
     Extracts device_id from the JSON payload body.
     """
     try:
@@ -43,10 +45,16 @@ async def verify_device_credentials(
             detail="Missing 'device_id' in request body"
         )
 
+    x_device_api_key = (
+        request.headers.get("X-Device-API-Key")
+        or request.headers.get("X-Device-Key")
+        or x_device_api_key_header
+    )
+
     if not x_device_api_key:
         raise HTTPException(
             status_code=401,
-            detail="Missing device API key header (X-Device-API-Key)"
+            detail="Missing device API key header (X-Device-API-Key or X-Device-Key)"
         )
     
     # Hash incoming key and verify by database lookup

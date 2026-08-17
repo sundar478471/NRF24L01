@@ -58,17 +58,31 @@ def ensure_columns():
             db.execute(text("ALTER TABLE devices ADD COLUMN firmware_version VARCHAR DEFAULT '1.0.0'"))
             db.commit()
 
-        # 3. Alter sensor_readings to add latency_ms, is_buffered, captured_at if missing
+        # 3. Alter sensor_readings to add latency_ms if missing
         try:
             db.execute(text("SELECT latency_ms FROM sensor_readings LIMIT 1"))
         except Exception:
-            logger.info("Upgrading table sensor_readings: adding latency_ms, is_buffered, captured_at columns")
+            logger.info("Upgrading table sensor_readings: adding latency_ms column")
             db.execute(text("ALTER TABLE sensor_readings ADD COLUMN latency_ms INTEGER NULL"))
-            db.execute(text("ALTER TABLE sensor_readings ADD COLUMN is_buffered BOOLEAN DEFAULT 0"))
+            db.commit()
+
+        # 4. Alter sensor_readings to add is_buffered if missing
+        try:
+            db.execute(text("SELECT is_buffered FROM sensor_readings LIMIT 1"))
+        except Exception:
+            logger.info("Upgrading table sensor_readings: adding is_buffered column")
+            db.execute(text("ALTER TABLE sensor_readings ADD COLUMN is_buffered BOOLEAN DEFAULT FALSE"))
+            db.commit()
+
+        # 5. Alter sensor_readings to add captured_at if missing
+        try:
+            db.execute(text("SELECT captured_at FROM sensor_readings LIMIT 1"))
+        except Exception:
+            logger.info("Upgrading table sensor_readings: adding captured_at column")
             db.execute(text("ALTER TABLE sensor_readings ADD COLUMN captured_at TIMESTAMP NULL"))
             db.commit()
 
-        # 4. Alter sensor_readings to add public_id if missing
+        # 6. Alter sensor_readings to add public_id if missing
         try:
             db.execute(text("SELECT public_id FROM sensor_readings LIMIT 1"))
         except Exception:
@@ -327,6 +341,22 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         content={"detail": exc.errors()}
+    )
+
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    if isinstance(exc, StarletteHTTPException):
+        raise exc
+    logger.exception(f"Unhandled exception during request {request.method} {request.url.path}: {exc}")
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={
+            "success": False,
+            "error": "sensor_data_processing_failed",
+            "message": "Unable to process sensor data"
+        }
     )
 
 # CORS Middleware
@@ -846,36 +876,42 @@ async def process_and_save_sensor_data(
     )
 
     # 5. Generate Deterministic Cryptographic Hash
-    data_hash = compute_sensor_hash(
-        device_id=db_reading.device_id,
-        temperature=db_reading.temperature,
-        humidity=db_reading.humidity,
-        motion=db_reading.motion,
-        packet_number=db_reading.packet_number,
-        received_at=db_reading.received_at
-    )
+    blockchain_status = "PENDING"
+    try:
+        data_hash = compute_sensor_hash(
+            device_id=db_reading.device_id,
+            temperature=db_reading.temperature,
+            humidity=db_reading.humidity,
+            motion=db_reading.motion,
+            packet_number=db_reading.packet_number,
+            received_at=db_reading.received_at
+        )
 
-    # 6. Create Blockchain Record
-    bc_record = BlockchainRecord(
-        sensor_record_id=db_reading.id,
-        device_id=db_reading.device_id,
-        data_hash=data_hash,
-        transaction_hash=None,
-        block_number=None,
-        network="hardhat" if blockchain_client.is_mock else "polygon",
-        contract_address=settings.BLOCKCHAIN_CONTRACT_ADDRESS or "mock_address",
-        recorded_at=None,
-        verification_status="PENDING"
-    )
-    db.add(bc_record)
-    db.commit()
-    db.refresh(bc_record)
+        # 6. Create Blockchain Record
+        bc_record = BlockchainRecord(
+            sensor_record_id=db_reading.id,
+            device_id=db_reading.device_id,
+            data_hash=data_hash,
+            transaction_hash=None,
+            block_number=None,
+            network="hardhat" if blockchain_client.is_mock else "polygon",
+            contract_address=settings.BLOCKCHAIN_CONTRACT_ADDRESS or "mock_address",
+            recorded_at=None,
+            verification_status="PENDING"
+        )
+        db.add(bc_record)
+        db.commit()
+        db.refresh(bc_record)
 
-    # 7. Queue for Asynchronous Blockchain submission
-    if background_tasks is not None:
-        background_tasks.add_task(process_blockchain_record, bc_record.id)
-    else:
-        await enqueue_blockchain_record(bc_record.id)
+        # 7. Queue for Asynchronous Blockchain submission
+        if background_tasks is not None:
+            background_tasks.add_task(process_blockchain_record, bc_record.id)
+        else:
+            await enqueue_blockchain_record(bc_record.id)
+    except Exception as bc_err:
+        logger.error(f"Error enqueuing blockchain registration for reading {db_reading.id}: {bc_err}")
+        db.rollback()
+        blockchain_status = "FAILED"
 
     # 8. Broadcast Sensor Reading to WebSocket UI Clients
     await manager.broadcast({
@@ -891,7 +927,7 @@ async def process_and_save_sensor_data(
             "is_buffered": db_reading.is_buffered,
             "captured_at": db_reading.captured_at.isoformat() if db_reading.captured_at else None,
             "received_at": db_reading.received_at.isoformat(),
-            "blockchain_status": "PENDING"
+            "blockchain_status": blockchain_status
         }
     })
 

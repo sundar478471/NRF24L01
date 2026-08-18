@@ -27,6 +27,7 @@
 */
 
 #include "receiver_config.h"
+
 #include <HTTPClient.h>
 #include <RF24.h>
 #include <SPI.h>
@@ -37,30 +38,29 @@
 // USER CONFIGURATION
 // =====================================================
 
-// Wi-Fi credentials loaded from receiver_config.h
 const char *WIFI_SSID = SECRET_SSID;
 const char *WIFI_PASSWORD = SECRET_PASS;
 
-// IMPORTANT:
-// Put your PUBLIC backend API endpoint here.
-//
-// Example:
-// https://your-domain.com/api/v1/sensor-data
-//
-// DO NOT use:
-// localhost
-// 127.0.0.1
-// 192.168.x.x
+/*
+  IMPORTANT:
+  ESP32 MUST NOT use:
+    localhost
+    127.0.0.1
 
-const char *API_URL = "https://nrf24l01-monitoring.vercel.app/api/v1/sensor-data";
+  The ESP32 uses the public backend URL below.
+*/
+const char *API_URL =
+    "https://nrf24l01-monitoring.vercel.app/api/v1/sensor-data";
 
-const char *HEARTBEAT_URL = "https://nrf24l01-monitoring.vercel.app/api/v1/devices/heartbeat";
+const char *HEARTBEAT_URL =
+    "https://nrf24l01-monitoring.vercel.app/api/v1/devices/heartbeat";
 
-// Device identifier used by your website/backend
 const char *DEVICE_ID = "receiver-01";
 
-// Device API key loaded from receiver_config.h
+// API key comes from receiver_config.h
 const char *DEVICE_API_KEY = SECRET_API_KEY;
+
+const char *FIRMWARE_VERSION = "1.0.0";
 
 // =====================================================
 // NRF24 PINS
@@ -70,7 +70,7 @@ const char *DEVICE_API_KEY = SECRET_API_KEY;
 #define NRF_CSN 5
 
 // =====================================================
-// RECEIVER OUTPUT PINS
+// OUTPUT PINS
 // =====================================================
 
 #define RGB_RED 25
@@ -78,12 +78,10 @@ const char *DEVICE_API_KEY = SECRET_API_KEY;
 #define RGB_BLUE 33
 
 #define BUTTON_PIN 32
-
 #define BUZZER_PIN 13
 
 // =====================================================
 // NRF24 CONFIGURATION
-// MUST MATCH TRANSMITTER
 // =====================================================
 
 const uint64_t RADIO_ADDRESS = 0x4E4F444531LL;
@@ -96,7 +94,7 @@ const rf24_pa_dbm_e RADIO_PA_LEVEL = RF24_PA_LOW;
 
 // =====================================================
 // SENSOR PACKET
-// MUST EXACTLY MATCH TRANSMITTER
+// MUST MATCH TRANSMITTER EXACTLY
 // =====================================================
 
 struct SensorPacket {
@@ -123,33 +121,31 @@ SensorPacket packet;
 // =====================================================
 
 unsigned long lastPacketReceived = 0;
-
 unsigned long lastWiFiCheck = 0;
-
 unsigned long lastHeartbeat = 0;
 
 bool buzzerAcknowledged = false;
-
 bool lastMotionState = false;
 
 uint32_t lastPacketNumber = 0;
 
-// Device diagnostics and state tracking
 uint32_t wifiReconnects = 0;
 uint32_t backendFailures = 0;
-const char *FIRMWARE_VERSION = "1.0.0";
-
-// Device considered offline after this period
-const unsigned long DEVICE_TIMEOUT = 10000;
-
-// Wi-Fi reconnect interval
-const unsigned long WIFI_RECONNECT_INTERVAL = 10000;
-
-// Heartbeat interval
-const unsigned long HEARTBEAT_INTERVAL = 30000;
 
 // =====================================================
-// RGB LED FUNCTIONS
+// TIMERS
+// =====================================================
+
+const unsigned long DEVICE_TIMEOUT = 10000;
+
+const unsigned long WIFI_RECONNECT_INTERVAL = 10000;
+
+const unsigned long HEARTBEAT_INTERVAL = 30000;
+
+const unsigned long HTTP_TIMEOUT = 15000;
+
+// =====================================================
+// RGB LED
 // =====================================================
 
 void rgbOff() {
@@ -190,12 +186,17 @@ void connectWiFi() {
     return;
   }
 
-  wifiReconnects++; // Increment wifi reconnect counter
+  wifiReconnects++;
 
   Serial.println();
-  Serial.println("Connecting to Wi-Fi...");
+  Serial.println("================================");
+  Serial.println("CONNECTING TO WI-FI");
+  Serial.println("================================");
 
   WiFi.mode(WIFI_STA);
+
+  WiFi.disconnect(true);
+  delay(200);
 
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
@@ -212,59 +213,126 @@ void connectWiFi() {
 
   if (WiFi.status() == WL_CONNECTED) {
 
-    Serial.println("Wi-Fi CONNECTED");
+    Serial.println("[OK] Wi-Fi CONNECTED");
 
     Serial.print("IP Address: ");
     Serial.println(WiFi.localIP());
 
+    Serial.print("RSSI: ");
+    Serial.print(WiFi.RSSI());
+    Serial.println(" dBm");
+
   } else {
 
-    Serial.println("Wi-Fi connection FAILED");
+    Serial.println("[FAILED] Wi-Fi connection");
   }
 }
 
 // =====================================================
-// SEND SENSOR DATA TO WEBSITE BACKEND
+// PRINT HTTP RESULT
+// =====================================================
+
+void printHTTPResult(int httpCode, const String &response) {
+
+  Serial.println();
+  Serial.println("================================");
+  Serial.println("BACKEND RESPONSE");
+  Serial.println("================================");
+
+  Serial.print("HTTP Status: ");
+  Serial.println(httpCode);
+
+  Serial.println("Server Response:");
+
+  if (response.length() > 0) {
+    Serial.println(response);
+  } else {
+    Serial.println("(empty response)");
+  }
+
+  Serial.println("================================");
+}
+
+// =====================================================
+// SEND SENSOR DATA
 // =====================================================
 
 bool sendSensorData() {
 
   if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("Cannot send data: Wi-Fi offline");
+
+    Serial.println("[FAILED] Cannot upload: Wi-Fi offline");
+
     return false;
   }
-
-  WiFiClientSecure secureClient;
-  WiFiClient client;
-  HTTPClient http;
-  bool beginSuccess = false;
 
   Serial.println();
-  Serial.println("Sending sensor data to backend...");
+  Serial.println("================================");
+  Serial.println("SENDING SENSOR DATA");
+  Serial.println("================================");
 
-  if (String(API_URL).startsWith("https://")) {
-    secureClient.setInsecure();
-    beginSuccess = http.begin(secureClient, API_URL);
-  } else {
-    beginSuccess = http.begin(client, API_URL);
-  }
+  Serial.print("Backend URL: ");
+  Serial.println(API_URL);
+
+  Serial.print("Device ID: ");
+  Serial.println(DEVICE_ID);
+
+  Serial.print("Wi-Fi IP: ");
+  Serial.println(WiFi.localIP());
+
+  Serial.print("Wi-Fi RSSI: ");
+  Serial.print(WiFi.RSSI());
+  Serial.println(" dBm");
+
+  WiFiClientSecure secureClient;
+
+  // Development/testing.
+  // For production, use the server CA certificate.
+  secureClient.setInsecure();
+
+  HTTPClient http;
+
+  http.setConnectTimeout(10000);
+  http.setTimeout(HTTP_TIMEOUT);
+
+  bool beginSuccess = http.begin(secureClient, API_URL);
 
   if (!beginSuccess) {
-    Serial.println("Connection initialization failed");
+
+    Serial.println("[FAILED] HTTP connection initialization");
+
     backendFailures++;
+
     return false;
   }
 
-  http.setTimeout(8000);
-
-  // Authentication - updated to expect "X-Device-API-Key"
-  http.addHeader("X-Device-API-Key", DEVICE_API_KEY);
+  // ===================================================
+  // HEADERS
+  // ===================================================
 
   http.addHeader("Content-Type", "application/json");
 
-  // ---------------------------------------------------
-  // JSON DATA
-  // ---------------------------------------------------
+  /*
+    Your FastAPI backend accepts:
+      X-Device-API-Key
+    or:
+      X-Device-Key
+
+    Send BOTH to make the ESP32 compatible with
+    the current backend authentication middleware.
+  */
+
+  http.addHeader("X-Device-API-Key", DEVICE_API_KEY);
+
+  http.addHeader("X-Device-Key", DEVICE_API_KEY);
+
+  http.addHeader("Accept", "application/json");
+
+  http.addHeader("User-Agent", "ESP32-NRF24-Receiver/1.0.0");
+
+  // ===================================================
+  // JSON
+  // ===================================================
 
   String json = "{";
 
@@ -286,145 +354,248 @@ bool sendSensorData() {
 
   json += "\"packet_number\":";
   json += String(packet.packet_number);
-
-  // Add diagnostic fields to match database schemas
   json += ",";
+
   json += "\"wifi_reconnects\":";
   json += String(wifiReconnects);
   json += ",";
+
   json += "\"backend_failures\":";
   json += String(backendFailures);
   json += ",";
+
   json += "\"uptime\":";
   json += String(millis() / 1000);
   json += ",";
-  json += "\"buffer_count\":0,";
+
+  json += "\"buffer_count\":";
+  json += "0";
+  json += ",";
+
   json += "\"firmware_version\":\"";
   json += FIRMWARE_VERSION;
   json += "\"";
 
   json += "}";
 
+  Serial.println();
   Serial.println("JSON:");
   Serial.println(json);
 
-  // ---------------------------------------------------
+  // ===================================================
   // POST
-  // ---------------------------------------------------
+  // ===================================================
 
   int httpCode = http.POST(json);
 
-  Serial.print("HTTP Status: ");
-  Serial.println(httpCode);
+  String response = "";
 
-  bool success = false;
   if (httpCode > 0) {
 
-    String response = http.getString();
-
-    Serial.println("Server Response:");
-    Serial.println(response);
-
-    if (httpCode >= 200 && httpCode < 300) {
-      Serial.println("DATA UPLOAD SUCCESS");
-      success = true;
-    } else {
-      backendFailures++;
-    }
-
-  } else {
-    Serial.print("HTTP Error: ");
-    Serial.println(http.errorToString(httpCode));
-    backendFailures++;
+    response = http.getString();
   }
+
+  printHTTPResult(httpCode, response);
+
+  // ===================================================
+  // RESULT HANDLING
+  // ===================================================
+
+  if (httpCode == 200 || httpCode == 201 || httpCode == 202) {
+
+    Serial.println("[SUCCESS] SENSOR DATA UPLOADED");
+
+    http.end();
+
+    return true;
+  }
+
+  if (httpCode == 401) {
+
+    Serial.println();
+    Serial.println("[ERROR] 401 UNAUTHORIZED");
+    Serial.println("Check SECRET_API_KEY in receiver_config.h");
+  }
+
+  else if (httpCode == 403) {
+
+    Serial.println();
+    Serial.println("[ERROR] 403 FORBIDDEN");
+    Serial.println("Device API key was rejected.");
+  }
+
+  else if (httpCode == 404) {
+
+    Serial.println();
+    Serial.println("[ERROR] 404 NOT FOUND");
+    Serial.println("Check API_URL and deployed backend route.");
+  }
+
+  else if (httpCode == 422) {
+
+    Serial.println();
+    Serial.println("[ERROR] 422 VALIDATION ERROR");
+    Serial.println("Backend rejected the JSON structure.");
+  }
+
+  else if (httpCode == 500) {
+
+    Serial.println();
+    Serial.println("[ERROR] 500 BACKEND ERROR");
+    Serial.println("ESP32 reached the backend, but the");
+    Serial.println("server failed while processing the data.");
+    Serial.println("Compare this response with local Swagger.");
+  }
+
+  else if (httpCode < 0) {
+
+    Serial.println();
+    Serial.println("[ERROR] HTTP CONNECTION ERROR");
+
+    Serial.print("Reason: ");
+    Serial.println(http.errorToString(httpCode));
+  }
+
+  backendFailures++;
 
   http.end();
 
-  return success;
+  return false;
 }
 
 // =====================================================
-// SEND HEARTBEAT TO WEBSITE BACKEND
+// HEARTBEAT
 // =====================================================
 
 bool sendHeartbeat() {
+
   if (WiFi.status() != WL_CONNECTED) {
+
     Serial.println("Cannot send heartbeat: Wi-Fi offline");
+
     return false;
   }
 
   WiFiClientSecure secureClient;
-  WiFiClient client;
+
+  secureClient.setInsecure();
+
   HTTPClient http;
-  bool beginSuccess = false;
 
-  Serial.println();
-  Serial.println("Sending heartbeat to backend...");
+  http.setConnectTimeout(10000);
+  http.setTimeout(HTTP_TIMEOUT);
 
-  if (String(HEARTBEAT_URL).startsWith("https://")) {
-    secureClient.setInsecure();
-    beginSuccess = http.begin(secureClient, HEARTBEAT_URL);
-  } else {
-    beginSuccess = http.begin(client, HEARTBEAT_URL);
-  }
+  bool beginSuccess = http.begin(secureClient, HEARTBEAT_URL);
 
   if (!beginSuccess) {
-    Serial.println("Heartbeat connection initialization failed");
+
+    Serial.println("[FAILED] Heartbeat initialization");
+
     backendFailures++;
+
     return false;
   }
 
-  http.setTimeout(8000);
+  // ===================================================
+  // HEADERS
+  // ===================================================
 
-  http.addHeader("X-Device-API-Key", DEVICE_API_KEY);
   http.addHeader("Content-Type", "application/json");
 
-  // Determine NRF Link status
+  http.addHeader("X-Device-API-Key", DEVICE_API_KEY);
+
+  http.addHeader("X-Device-Key", DEVICE_API_KEY);
+
+  http.addHeader("Accept", "application/json");
+
+  http.addHeader("User-Agent", "ESP32-NRF24-Receiver/1.0.0");
+
+  // ===================================================
+  // NRF STATUS
+  // ===================================================
+
   String nrfStatus = "ERROR";
-  if (millis() - lastPacketReceived <= DEVICE_TIMEOUT &&
-      lastPacketReceived > 0) {
+
+  if (lastPacketReceived > 0 &&
+      millis() - lastPacketReceived <= DEVICE_TIMEOUT) {
+
     nrfStatus = "ACTIVE";
   }
 
-  // JSON payload
+  // ===================================================
+  // HEARTBEAT JSON
+  // ===================================================
+
   String json = "{";
-  json += "\"device_id\":\"" + String(DEVICE_ID) + "\",";
+
+  json += "\"device_id\":\"";
+  json += DEVICE_ID;
+  json += "\",";
+
   json += "\"wifi_status\":\"CONNECTED\",";
-  json += "\"nrf_status\":\"" + nrfStatus + "\",";
-  json += "\"wifi_reconnects\":" + String(wifiReconnects) + ",";
-  json += "\"backend_failures\":" + String(backendFailures) + ",";
-  json += "\"uptime\":" + String(millis() / 1000) + ",";
+
+  json += "\"nrf_status\":\"";
+  json += nrfStatus;
+  json += "\",";
+
+  json += "\"wifi_reconnects\":";
+  json += String(wifiReconnects);
+  json += ",";
+
+  json += "\"backend_failures\":";
+  json += String(backendFailures);
+  json += ",";
+
+  json += "\"uptime\":";
+  json += String(millis() / 1000);
+  json += ",";
+
   json += "\"buffer_count\":0,";
-  json += "\"firmware_version\":\"" + String(FIRMWARE_VERSION) + "\"";
+
+  json += "\"firmware_version\":\"";
+  json += FIRMWARE_VERSION;
+  json += "\"";
+
   json += "}";
 
-  Serial.println("JSON:");
+  Serial.println();
+  Serial.println("Sending heartbeat...");
+
   Serial.println(json);
 
   int httpCode = http.POST(json);
 
-  Serial.print("HTTP Status: ");
-  Serial.println(httpCode);
+  String response = "";
 
-  bool success = false;
   if (httpCode > 0) {
-    String response = http.getString();
-    Serial.println("Server Response:");
-    Serial.println(response);
-    if (httpCode >= 200 && httpCode < 300) {
-      Serial.println("HEARTBEAT SUCCESS");
-      success = true;
-    } else {
-      backendFailures++;
-    }
-  } else {
-    Serial.print("HTTP Error: ");
-    Serial.println(http.errorToString(httpCode));
-    backendFailures++;
+    response = http.getString();
   }
 
+  Serial.print("Heartbeat HTTP Status: ");
+  Serial.println(httpCode);
+
+  if (response.length() > 0) {
+
+    Serial.println("Heartbeat Response:");
+    Serial.println(response);
+  }
+
+  if (httpCode >= 200 && httpCode < 300) {
+
+    Serial.println("[SUCCESS] HEARTBEAT");
+
+    http.end();
+
+    return true;
+  }
+
+  Serial.println("[FAILED] HEARTBEAT");
+
+  backendFailures++;
+
   http.end();
-  return success;
+
+  return false;
 }
 
 // =====================================================
@@ -433,9 +604,9 @@ bool sendHeartbeat() {
 
 void updateLocalOutputs() {
 
-  if (millis() - lastPacketReceived > DEVICE_TIMEOUT) {
+  if (lastPacketReceived == 0 ||
+      millis() - lastPacketReceived > DEVICE_TIMEOUT) {
 
-    // NRF24 communication timeout
     rgbBlue();
 
     digitalWrite(BUZZER_PIN, LOW);
@@ -443,12 +614,12 @@ void updateLocalOutputs() {
     return;
   }
 
-  // Motion detected
   if (packet.motion) {
 
     rgbRed();
 
     if (!buzzerAcknowledged) {
+
       digitalWrite(BUZZER_PIN, HIGH);
     }
 
@@ -501,9 +672,9 @@ void receiveNRF24Data() {
     radio.read(&packet, sizeof(packet));
   }
 
-  // ---------------------------------------------------
-  // VALIDATE DATA
-  // ---------------------------------------------------
+  // ===================================================
+  // VALIDATION
+  // ===================================================
 
   if (isnan(packet.temperature) || isnan(packet.humidity)) {
 
@@ -526,9 +697,9 @@ void receiveNRF24Data() {
     return;
   }
 
-  // ---------------------------------------------------
+  // ===================================================
   // PACKET RECEIVED
-  // ---------------------------------------------------
+  // ===================================================
 
   lastPacketReceived = millis();
 
@@ -539,30 +710,40 @@ void receiveNRF24Data() {
 
   Serial.println("NRF24 DATA RECEIVED");
 
+  Serial.println("================================");
+
   Serial.print("Packet: ");
+
   Serial.println(packet.packet_number);
 
   Serial.print("Temperature: ");
+
   Serial.print(packet.temperature, 2);
+
   Serial.println(" °C");
 
   Serial.print("Humidity: ");
+
   Serial.print(packet.humidity, 2);
+
   Serial.println(" %");
 
   Serial.print("Motion: ");
 
   if (packet.motion) {
+
     Serial.println("DETECTED");
+
   } else {
+
     Serial.println("NO MOTION");
   }
 
   Serial.println("================================");
 
-  // ---------------------------------------------------
-  // MOTION STATE CHANGE
-  // ---------------------------------------------------
+  // ===================================================
+  // MOTION EVENT
+  // ===================================================
 
   if (packet.motion && !lastMotionState) {
 
@@ -578,9 +759,12 @@ void receiveNRF24Data() {
 
   lastMotionState = packet.motion;
 
-  // ---------------------------------------------------
-  // SEND TO WEBSITE
-  // ---------------------------------------------------
+  // ===================================================
+  // IMPORTANT
+  // ===================================================
+  // Do not modify packet data here.
+  // HTTP upload is performed immediately for now.
+  // ===================================================
 
   sendSensorData();
 }
@@ -597,12 +781,14 @@ void setup() {
 
   Serial.println();
   Serial.println("====================================");
+
   Serial.println("      IoT RECEIVER ESP32");
+
   Serial.println("====================================");
 
-  // ---------------------------------------------------
+  // ===================================================
   // GPIO
-  // ---------------------------------------------------
+  // ===================================================
 
   pinMode(RGB_RED, OUTPUT);
 
@@ -618,9 +804,9 @@ void setup() {
 
   digitalWrite(BUZZER_PIN, LOW);
 
-  // ---------------------------------------------------
+  // ===================================================
   // NRF24
-  // ---------------------------------------------------
+  // ===================================================
 
   if (!radio.begin()) {
 
@@ -654,24 +840,40 @@ void setup() {
 
   Serial.println("[OK] NRF24L01 initialized");
 
-  // ---------------------------------------------------
+  Serial.print("Channel: ");
+
+  Serial.println(RADIO_CHANNEL);
+
+  Serial.println("Data Rate: 250KBPS");
+
+  Serial.println("PA Level: LOW");
+
+  // ===================================================
   // WIFI
-  // ---------------------------------------------------
+  // ===================================================
 
   connectWiFi();
 
-  // ---------------------------------------------------
+  // ===================================================
   // INITIAL STATUS
-  // ---------------------------------------------------
+  // ===================================================
 
   rgbBlue();
 
   Serial.println();
   Serial.println("RECEIVER READY");
+
   Serial.println("------------------------------------");
 
   Serial.print("Device ID: ");
+
   Serial.println(DEVICE_ID);
+
+  Serial.print("Backend URL: ");
+
+  Serial.println(API_URL);
+
+  Serial.println("API authentication: ENABLED");
 
   Serial.println("Waiting for NRF24 data...");
 }
@@ -682,27 +884,27 @@ void setup() {
 
 void loop() {
 
-  // ---------------------------------------------------
+  // ===================================================
   // NRF24
-  // ---------------------------------------------------
+  // ===================================================
 
   receiveNRF24Data();
 
-  // ---------------------------------------------------
+  // ===================================================
   // BUTTON
-  // ---------------------------------------------------
+  // ===================================================
 
   checkButton();
 
-  // ---------------------------------------------------
+  // ===================================================
   // LOCAL STATUS
-  // ---------------------------------------------------
+  // ===================================================
 
   updateLocalOutputs();
 
-  // ---------------------------------------------------
+  // ===================================================
   // WIFI RECONNECT
-  // ---------------------------------------------------
+  // ===================================================
 
   if (millis() - lastWiFiCheck > WIFI_RECONNECT_INTERVAL) {
 
@@ -716,9 +918,9 @@ void loop() {
     }
   }
 
-  // ---------------------------------------------------
+  // ===================================================
   // HEARTBEAT
-  // ---------------------------------------------------
+  // ===================================================
 
   if (millis() - lastHeartbeat > HEARTBEAT_INTERVAL) {
 
@@ -730,21 +932,45 @@ void loop() {
     Serial.print("Wi-Fi: ");
 
     if (WiFi.status() == WL_CONNECTED) {
+
       Serial.println("ONLINE");
+
     } else {
+
       Serial.println("OFFLINE");
     }
 
+    Serial.print("IP: ");
+
+    if (WiFi.status() == WL_CONNECTED) {
+
+      Serial.println(WiFi.localIP());
+
+    } else {
+
+      Serial.println("N/A");
+    }
+
+    Serial.print("Wi-Fi RSSI: ");
+
+    Serial.print(WiFi.RSSI());
+
+    Serial.println(" dBm");
+
     Serial.print("Last NRF Packet: ");
+
     Serial.println(lastPacketNumber);
 
-    Serial.print("Last Data Age: ");
-    Serial.print((millis() - lastPacketReceived) / 1000);
-    Serial.println(" seconds");
+    Serial.print("Backend Failures: ");
+
+    Serial.println(backendFailures);
+
+    Serial.print("Wi-Fi Reconnects: ");
+
+    Serial.println(wifiReconnects);
 
     Serial.println("=====================================");
 
-    // Send active heartbeat to website backend
     sendHeartbeat();
   }
 

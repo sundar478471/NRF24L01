@@ -52,9 +52,9 @@ const char *WIFI_PASSWORD = SECRET_PASS;
 // 127.0.0.1
 // 192.168.x.x
 
-const char *API_URL = "https://nrf24l01-monitoring.vercel.app/";
+const char *API_URL = "https://nrf24l01-monitoring.vercel.app/api/v1/sensor-data";
 
-const char *HEARTBEAT_URL = "https://nrf24l01-monitoring.vercel.app/";
+const char *HEARTBEAT_URL = "https://nrf24l01-monitoring.vercel.app/api/v1/devices/heartbeat";
 
 // Device identifier used by your website/backend
 const char *DEVICE_ID = "receiver-01";
